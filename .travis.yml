@@ -1,7 +1,80 @@
 language: php
-php:
-  - '7.4'
 
+dist: xenial
+
+services:
+  - memcached
+  - redis-server
+  - postgresql
+  - mysql
+
+cache:
+  directories:
+    - $HOME/.composer/cache
+
+php:
+  - 7.4
+  - 'nightly'
+
+env:
+  matrix:
+    - DB=mysql DB_DSN='mysql://root@127.0.0.1/test?init[]=SET sql_mode = "STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION"'
+
+matrix:
+  fast_finish: true
+
+  include:
+    - php: 7.3
+      env: PREFER_LOWEST=1
+
+  allow_failures:
+    - php: 'nightly'
+
+before_install:
+  - sudo chmod +x config/ci-setup.sh
+  - config/ci-setup.sh
+
+  - if [[ $DB == 'mysql' ]]; then mysql -u root -e 'CREATE DATABASE cakephp_test;'; fi
+  - if [[ $DB == 'pgsql' ]]; then psql -c 'CREATE DATABASE cakephp_test;' -U postgres; fi
+
+  - |
+      if [[ $TRAVIS_PHP_VERSION == '7.4' ]]; then
+        pecl channel-update pecl.php.net
+        pecl install pcov
+      fi
+  - |
+      if [[ $TRAVIS_PHP_VERSION != 'nightly' ]]; then
+        phpenv config-rm xdebug.ini
+        echo 'extension = memcached.so' >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini
+        echo 'extension = redis.so' >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini
+        echo 'extension = apcu.so' >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini
+        echo 'apc.enable_cli = 1' >> ~/.phpenv/versions/$(phpenv version-name)/etc/php.ini
+      fi
+  - sudo locale-gen da_DK.UTF-8
+
+install:
+  - |
+      if [[ $PREFER_LOWEST == 1 ]]; then
+        composer update --prefer-lowest --prefer-stable --no-interaction
+      elif [[ $TRAVIS_PHP_VERSION == 'nightly' ]]; then
+        composer install --no-interaction --ignore-platform-reqs
+      else
+        composer install --no-interaction
+      fi
 script:
-  - sh ./config/scrutinizer-setup.sh
-  - sh ./bin/phpunit --verbose --coverage-clover=clover.xml
+  - |
+      if [[ $TRAVIS_PHP_VERSION == '7.4' ]]; then
+        export CODECOVERAGE=1 && bin/phpunit --verbose --coverage-clover=clover.xml
+      else
+        bin/phpunit
+      fi
+after_success:
+  - |
+      if [[ $TRAVIS_PHP_VERSION == '7.4' ]]; then
+        wget https://github.com/php-coveralls/php-coveralls/releases/download/v2.1.0/php-coveralls.phar
+        chmod +x php-coveralls.phar
+        ./php-coveralls.phar
+      fi
+
+notifications:
+  email: false
